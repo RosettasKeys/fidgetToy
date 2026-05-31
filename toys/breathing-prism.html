@@ -187,20 +187,30 @@
       scene.add(beamLight);
       scene.add(beamLight.target);
 
-      // ── Input beam — glowing white cylinder from left toward prism ────
-      // Thin parallel beam (laser-like), tip at prism, extends left
-      const INPUT_LEN = 5.0;
-      const inputRayGeo = new THREE.CylinderGeometry(0.016, 0.016, INPUT_LEN, 6, 1, true);
-      inputRayGeo.translate(0, -INPUT_LEN / 2, 0); // tip at y=0
+      // ── Input beam — thin white laser, left face, upper entry ────────
+      // Enters ~2/3 up the left face (higher than rainbow exit = physics)
+      // Tilts slightly downward to imply refraction angle through glass
+      const INPUT_LEN = 6.0;
+      const inputRayGeo = new THREE.CylinderGeometry(0.008, 0.008, INPUT_LEN, 8, 1, true);
+      inputRayGeo.translate(0, -INPUT_LEN / 2, 0); // extends in -Y local (leftward after rotation)
       const inputRayMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.28,
+        color: 0xffffff, transparent: true, opacity: 0.55,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
       });
       const inputRay = new THREE.Mesh(inputRayGeo, inputRayMat);
+      // Point beam left-and-slightly-down: rotation.z = PI/2 points +Y to +X,
+      // so -Y extends left. Small rotation.x tilts it slightly downward.
       inputRay.rotation.z = Math.PI / 2;
-      // Entry point: midpoint of the left face in prism local space (mirrors ray exit)
-      inputRay.position.set(-0.635, 0.245, 0);
-      // Parent to prism so it moves/tilts with it
+      inputRay.rotation.x = 0.08; // slight downward tilt
+      // Entry point: upper portion of left face in prism local space
+      // Left face midpoint x ≈ -exitX, but place higher: use top-left area
+      // Will be updated by rebuildPrism to track geometry changes
+      const r0 = 2.2 * (2/3);
+      inputRay.position.set(
+        -(Math.sqrt(3)/4 * r0),   // midway along left face in X
+         r0 * 0.55,               // upper portion of face in Y
+         0
+      );
       prism.add(inputRay);
 
       // ── Spectral wedge — single triangle-fan mesh, parented to prism ─
@@ -365,15 +375,13 @@
         prism.add(edges);
 
         // Reposition wedge apex to match new right-face midpoint.
-        // Right face: top vertex (0, r*2/3) to bot-right (sqrt3/2*r, -r/2)
-        // where r = prismH * (2/3). Midpoint of that edge:
         const r = prismH * (2 / 3);
         const exitX = (0 + Math.sqrt(3)/2 * r) / 2;
         const exitY = (r * 2/3 + (-r/2)) / 2;
         wedgeMesh.position.set(exitX, exitY, 0);
 
-        // Also reposition input beam to left-face midpoint (mirror)
-        inputRay.position.set(-exitX, exitY, 0);
+        // Reposition input beam to upper portion of left face (higher than rainbow exit)
+        inputRay.position.set(-(Math.sqrt(3)/4 * r), r * 0.55, 0);
       }
 
       // ── Sound ────────────────────────────────────────────────────────
