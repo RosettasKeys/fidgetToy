@@ -187,28 +187,27 @@
       scene.add(beamLight);
       scene.add(beamLight.target);
 
-      // ── Input beam — thin white laser, left face, upper entry ────────
-      // Enters ~2/3 up the left face (higher than rainbow exit = physics)
-      // Tilts slightly downward to imply refraction angle through glass
-      const INPUT_LEN = 6.0;
-      const inputRayGeo = new THREE.CylinderGeometry(0.008, 0.008, INPUT_LEN, 8, 1, true);
-      inputRayGeo.translate(0, -INPUT_LEN / 2, 0); // extends in -Y local (leftward after rotation)
+      // Input beam: a converging wedge coming from the left.
+      // Wide end far left, narrows to a point at the left face entry.
+      // Use a cone geometry (wide base, zero tip) instead of a cylinder.
+      const INPUT_LEN = 7.0;
+      const inputRayGeo = new THREE.CylinderGeometry(0.0, 0.09, INPUT_LEN, 12, 1, true);
+      // Translate so tip (zero-radius end = top of cylinder) is at y=0
+      // CylinderGeometry: top radius first arg, so top=0.0 is the tip.
+      // Center is at y=0 by default, translate so tip sits at local origin:
+      inputRayGeo.translate(0, -INPUT_LEN / 2, 0); // tip at y=0, base extends in -Y
       const inputRayMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.55,
+        color: 0xffffff, transparent: true, opacity: 0.38,
         blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
       });
       const inputRay = new THREE.Mesh(inputRayGeo, inputRayMat);
-      // Point beam left-and-slightly-down: rotation.z = PI/2 points +Y to +X,
-      // so -Y extends left. Small rotation.x tilts it slightly downward.
-      inputRay.rotation.z = Math.PI / 2;
+      // rotation.z = -PI/2 maps local -Y → world -X (extends left)
+      inputRay.rotation.z = -Math.PI / 2;
       inputRay.rotation.x = 0.08; // slight downward tilt
-      // Entry point: upper portion of left face in prism local space
-      // Left face midpoint x ≈ -exitX, but place higher: use top-left area
-      // Will be updated by rebuildPrism to track geometry changes
       const r0 = 2.2 * (2/3);
       inputRay.position.set(
-        -(Math.sqrt(3)/4 * r0),   // midway along left face in X
-         r0 * 0.55,               // upper portion of face in Y
+        -(Math.sqrt(3)/4 * r0),
+         r0 * 0.55,
          0
       );
       prism.add(inputRay);
@@ -449,7 +448,7 @@
         beamLight.position.set(-4 + lightAngleX * 1.6, 1 + lightAngleY * 1.2, 4);
         beamLight.intensity = 2.5 + breath * 1.2 + pulse * 3;
 
-        inputRayMat.opacity = 0.18 + breath * 0.06 + (beamDragging ? 0.08 : 0);
+        inputRayMat.opacity = 0.30 + breath * 0.10 + (beamDragging ? 0.12 : 0);
 
         internalGlow.intensity = 0.3 + breath * 0.4 + pulse * 0.8;
 
