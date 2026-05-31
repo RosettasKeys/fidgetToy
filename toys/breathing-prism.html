@@ -177,19 +177,6 @@
       scene.environment = pmremGen.fromCubemap(cubeRT.texture).texture;
       pmremGen.dispose();
 
-      // ── Spectrum ─────────────────────────────────────────────────────
-      // phi = downward angle in XY plane (red bends least → shallowest, hits farthest)
-      // zRot = small Z-axis fan spread for visual depth
-      const SPECTRUM = [
-        { color: 0xff2040, phi: 0.28, zRot: -0.12 },
-        { color: 0xff7700, phi: 0.40, zRot: -0.08 },
-        { color: 0xffdd00, phi: 0.52, zRot: -0.04 },
-        { color: 0x22ee44, phi: 0.64, zRot:  0.00 },
-        { color: 0x00bbff, phi: 0.76, zRot:  0.04 },
-        { color: 0x3344ff, phi: 0.86, zRot:  0.08 },
-        { color: 0xcc00ff, phi: 0.96, zRot:  0.12 },
-      ];
-
       // ── Lighting ─────────────────────────────────────────────────────
       scene.add(new THREE.AmbientLight(0x080c18, 4));
 
@@ -216,33 +203,96 @@
       // Parent to prism so it moves/tilts with it
       prism.add(inputRay);
 
-      // ── Output rays — parented to prism so they move with it ────────
-      // Exit point: midpoint of the right face in prism local space.
-      // The right face runs from top vertex (0, r*2/3≈0.98, 0) to
-      // bottom-right vertex (sqrt3/2*r≈1.27, -r/2≈-0.49, 0).
-      // Midpoint ≈ (0.635, 0.245, 0) — this is where the rainbow exits.
-      const RAY_ORIGIN_LOCAL = new THREE.Vector3(0.635, 0.245, 0);
-      const RAY_LEN = 7.0;
-      const rays = SPECTRUM.map(({ color, zRot: zR }, i) => {
-        const geo = new THREE.CylinderGeometry(0.004, 0.032, RAY_LEN, 6, 1, true);
-        geo.translate(0, RAY_LEN / 2, 0); // pivot at tip, body extends in +Y (away from prism)
-        const mat = new THREE.MeshBasicMaterial({
-          color, transparent: true, opacity: 0,
-          blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(geo, mat);
-        mesh.position.copy(RAY_ORIGIN_LOCAL);
-        // Fan rays to the right (+X) with vertical (Y-axis) spread.
-        // rotation.z = -PI/2 points the cylinder along +X.
-        // rotation.x spreads them up/down like the album cover.
-        // Red (i=0) fans upward, violet (i=6) fans downward.
-        const spread = 0.55; // total fan angle in radians
-        const t = i / (SPECTRUM.length - 1);
-        mesh.rotation.z = -Math.PI / 2;         // point right
-        mesh.rotation.x = spread/2 - t * spread; // fan up→down
-        prism.add(mesh);
-        return mesh;
+      // ── Spectral wedge — single triangle-fan mesh, parented to prism ─
+      // Apex at right-face midpoint, fans right+down. Vertex colors give
+      // the continuous spectrum gradient. No per-ray rotation math.
+      // squeeze changes fan angle by moving the far vertices each frame.
+
+      const WEDGE_LEN   = 9.0;   // how far the fan extends
+      const WEDGE_SEGS  = 32;    // triangle count across the fan
+      const EXIT_LOCAL  = new THREE.Vector3(0.72, 0.18, 0); // right face midpoint
+
+      // Colors across the fan: white at apex edge, spectrum across width
+      const WEDGE_COLORS = [
+        [1.0, 1.0, 1.0],   // white (apex convergence point)
+        [1.0, 0.13, 0.25],  // red
+        [1.0, 0.47, 0.0],   // orange
+        [1.0, 0.87, 0.0],   // yellow
+        [0.13, 0.93, 0.27], // green
+        [0.0,  0.73, 1.0],  // cyan
+        [0.2,  0.27, 1.0],  // blue
+        [0.8,  0.0,  1.0],  // violet
+      ];
+
+      // Build geometry: apex vertex + WEDGE_SEGS+1 arc vertices
+      // Total triangles: WEDGE_SEGS, each sharing the apex
+      const wedgeVertCount = 1 + (WEDGE_SEGS + 1);
+      const wedgePositions = new Float32Array(wedgeVertCount * 3);
+      const wedgeColors    = new Float32Array(wedgeVertCount * 3);
+      const wedgeIndices   = [];
+
+      // Apex vertex (index 0) — at origin, will be offset by position
+      wedgePositions[0] = 0; wedgePositions[1] = 0; wedgePositions[2] = 0;
+      wedgeColors[0] = 1; wedgeColors[1] = 1; wedgeColors[2] = 1;
+
+      // Arc vertices (indices 1..WEDGE_SEGS+1)
+      for (let i = 0; i <= WEDGE_SEGS; i++) {
+        const t = i / WEDGE_SEGS;
+        const vi = (1 + i) * 3;
+        // positions filled in animate() — just init to zero
+        wedgePositions[vi] = WEDGE_LEN; wedgePositions[vi+1] = 0; wedgePositions[vi+2] = 0;
+        // color: interpolate through WEDGE_COLORS array
+        const ci = t * (WEDGE_COLORS.length - 1);
+        const ci0 = Math.floor(ci), ci1 = Math.min(ci0 + 1, WEDGE_COLORS.length - 1);
+        const cf = ci - ci0;
+        const c0 = WEDGE_COLORS[ci0], c1 = WEDGE_COLORS[ci1];
+        wedgeColors[vi]   = c0[0] + (c1[0]-c0[0]) * cf;
+        wedgeColors[vi+1] = c0[1] + (c1[1]-c0[1]) * cf;
+        wedgeColors[vi+2] = c0[2] + (c1[2]-c0[2]) * cf;
+      }
+
+      for (let i = 0; i < WEDGE_SEGS; i++) {
+        wedgeIndices.push(0, 1 + i, 2 + i);
+      }
+
+      const wedgeGeo = new THREE.BufferGeometry();
+      const wedgePosAttr = new THREE.BufferAttribute(wedgePositions, 3);
+      wedgePosAttr.setUsage(THREE.DynamicDrawUsage);
+      wedgeGeo.setAttribute('position', wedgePosAttr);
+      wedgeGeo.setAttribute('color', new THREE.BufferAttribute(wedgeColors, 3));
+      wedgeGeo.setIndex(wedgeIndices);
+
+      const wedgeMat = new THREE.MeshBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
       });
+
+      const wedgeMesh = new THREE.Mesh(wedgeGeo, wedgeMat);
+      wedgeMesh.position.copy(EXIT_LOCAL);
+      prism.add(wedgeMesh);
+
+      // Helper: update arc vertex positions based on current squeeze/breath
+      function updateWedge(sqz, breath) {
+        const halfAngle = 0.38 * sqz;       // half the fan opening angle
+        const BASE_DOWN = 0.38;              // tilt the whole fan downward
+        const len = WEDGE_LEN * (0.9 + breath * 0.1);
+
+        for (let i = 0; i <= WEDGE_SEGS; i++) {
+          const t = i / WEDGE_SEGS;
+          // angle from -halfAngle to +halfAngle, then shifted down by BASE_DOWN
+          const angle = (t - 0.5) * 2 * halfAngle - BASE_DOWN;
+          const vi = (1 + i) * 3;
+          wedgePositions[vi]   = Math.cos(angle) * len;  // X: right
+          wedgePositions[vi+1] = Math.sin(angle) * len;  // Y: up/down
+          wedgePositions[vi+2] = 0;
+        }
+        wedgePosAttr.needsUpdate = true;
+        wedgeGeo.computeBoundingSphere();
+      }
 
       // ── State ────────────────────────────────────────────────────────
       let mouse         = { x: 0, y: 0 };
@@ -381,27 +431,14 @@
         beamLight.position.set(-4 + lightAngleX * 1.6, 1 + lightAngleY * 1.2, 4);
         beamLight.intensity = 2.5 + breath * 1.2 + pulse * 3;
 
-        inputRayMat.opacity = 0.22 + breath * 0.08 + (beamDragging ? 0.1 : 0);
+        inputRayMat.opacity = 0.18 + breath * 0.06 + (beamDragging ? 0.08 : 0);
 
         internalGlow.intensity = 0.3 + breath * 0.4 + pulse * 0.8;
 
-        // Output rays: squeeze drives vertical spread, breath drives opacity
-        rayOpacity = Math.min(1, rayOpacity + delta * 0.4);
-        const rayAlpha = (0.6 + breath * 0.3 + pulse * 0.3) * rayOpacity
-                       * Math.min(1.3, squeeze * 0.85 + 0.28);
-
-        rays.forEach((ray, i) => {
-          const t = i / (SPECTRUM.length - 1);
-          // Base angle: exit tilted downward ~25° from horizontal (toward base)
-          // Then fan vertically: red high, violet low
-          const BASE_DOWN = 0.42;
-          const spread = 0.72 * Math.max(0.5, Math.min(1.6, squeeze));
-          ray.rotation.z = -Math.PI / 2 - BASE_DOWN; // point right+down
-          ray.rotation.x = spread/2 - t * spread;     // fan up→down around that axis
-          ray.scale.y    = 0.95 + breath * 0.06 + pulse * 0.15;
-          const shimmer  = 0.85 + Math.sin(breathT * 3.5 + i * 0.95) * 0.12;
-          ray.material.opacity = rayAlpha * shimmer;
-        });
+        // Spectral wedge: update geometry + opacity
+        rayOpacity = Math.min(1, rayOpacity + delta * 0.5);
+        updateWedge(squeeze, breath);
+        wedgeMat.opacity = (0.55 + breath * 0.25 + pulse * 0.25) * rayOpacity;
 
         // Glass tint breathes through hues
         const hue = breathT * 0.1;
