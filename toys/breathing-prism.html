@@ -225,7 +225,7 @@
       const RAY_LEN = 7.0;
       const rays = SPECTRUM.map(({ color, zRot: zR }, i) => {
         const geo = new THREE.CylinderGeometry(0.007, 0.08, RAY_LEN, 6, 1, true);
-        geo.translate(0, -RAY_LEN / 2, 0); // pivot at tip (y=0)
+        geo.translate(0, RAY_LEN / 2, 0); // pivot at tip, body extends in +Y (away from prism)
         const mat = new THREE.MeshBasicMaterial({
           color, transparent: true, opacity: 0,
           blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
