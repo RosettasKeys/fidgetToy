@@ -100,9 +100,9 @@
       composer.addPass(new THREE.RenderPass(scene, camera));
       const bloomPass = new THREE.UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        0.9,   // strength — reduced so colors don't merge to white
-        0.5,  // radius
-        0.18   // threshold — higher so only bright cores bloom
+        0.6,   // strength
+        0.3,   // radius — tight so colors don't bleed into each other
+        0.22   // threshold
       );
       composer.addPass(bloomPass);
 
@@ -212,9 +212,8 @@
       const WEDGE_SEGS  = 32;    // triangle count across the fan
       const EXIT_LOCAL  = new THREE.Vector3(0.72, 0.18, 0); // right face midpoint
 
-      // Colors across the fan: white at apex edge, spectrum across width
+      // Colors: pure spectrum, no white — additive blending handles brightness
       const WEDGE_COLORS = [
-        [1.0, 1.0, 1.0],   // white (apex convergence point)
         [1.0, 0.13, 0.25],  // red
         [1.0, 0.47, 0.0],   // orange
         [1.0, 0.87, 0.0],   // yellow
@@ -231,9 +230,9 @@
       const wedgeColors    = new Float32Array(wedgeVertCount * 3);
       const wedgeIndices   = [];
 
-      // Apex vertex (index 0) — at origin, will be offset by position
+      // Apex vertex (index 0) — black, colors only appear at the arc
       wedgePositions[0] = 0; wedgePositions[1] = 0; wedgePositions[2] = 0;
-      wedgeColors[0] = 1; wedgeColors[1] = 1; wedgeColors[2] = 1;
+      wedgeColors[0] = 0; wedgeColors[1] = 0; wedgeColors[2] = 0;
 
       // Arc vertices (indices 1..WEDGE_SEGS+1)
       for (let i = 0; i <= WEDGE_SEGS; i++) {
@@ -364,6 +363,17 @@
         edgeGeo = new THREE.EdgesGeometry(prismGeo);
         edges.geometry = edgeGeo;
         prism.add(edges);
+
+        // Reposition wedge apex to match new right-face midpoint.
+        // Right face: top vertex (0, r*2/3) to bot-right (sqrt3/2*r, -r/2)
+        // where r = prismH * (2/3). Midpoint of that edge:
+        const r = prismH * (2 / 3);
+        const exitX = (0 + Math.sqrt(3)/2 * r) / 2;
+        const exitY = (r * 2/3 + (-r/2)) / 2;
+        wedgeMesh.position.set(exitX, exitY, 0);
+
+        // Also reposition input beam to left-face midpoint (mirror)
+        inputRay.position.set(-exitX, exitY, 0);
       }
 
       // ── Sound ────────────────────────────────────────────────────────
@@ -438,7 +448,7 @@
         // Spectral wedge: update geometry + opacity
         rayOpacity = Math.min(1, rayOpacity + delta * 0.5);
         updateWedge(squeeze, breath);
-        wedgeMat.opacity = (0.55 + breath * 0.25 + pulse * 0.25) * rayOpacity;
+        wedgeMat.opacity = (0.28 + breath * 0.12 + pulse * 0.15) * rayOpacity;
 
         // Glass tint breathes through hues
         const hue = breathT * 0.1;
