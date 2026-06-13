@@ -219,6 +219,49 @@ h1 {
   box-shadow: 0 0 26px var(--lime);
 }
 
+.tension-preview {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 58% 48%, rgba(255, 79, 116, 0.2), transparent 20%),
+    radial-gradient(circle at 52% 52%, rgba(54, 247, 255, 0.12), transparent 42%),
+    linear-gradient(145deg, #070912, #12101a 58%, #030407);
+}
+
+.tension-preview span {
+  position: absolute;
+  left: -10%;
+  width: 122%;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--cyan);
+  box-shadow: 0 0 10px var(--cyan);
+  transform-origin: center;
+}
+
+.tension-preview span:nth-child(1) {
+  top: 27%;
+  transform: rotate(18deg);
+}
+
+.tension-preview span:nth-child(2) {
+  top: 46%;
+  background: var(--amber);
+  box-shadow: 0 0 14px var(--amber);
+  transform: rotate(-15deg);
+}
+
+.tension-preview span:nth-child(3) {
+  top: 63%;
+  background: #ff4f74;
+  box-shadow: 0 0 18px #ff4f74;
+  transform: rotate(12deg);
+}
+
+.tension-preview span:nth-child(4) {
+  top: 74%;
+  transform: rotate(-24deg);
+}
+
 .particle-preview {
   background-image:
     radial-gradient(circle at 18% 28%, rgba(255, 209, 102, 0.78) 0 3px, transparent 4px),
@@ -233,6 +276,24 @@ h1 {
     radial-gradient(circle at 50% 50%, rgba(255, 209, 102, 0.62), transparent 24%),
     radial-gradient(circle at 50% 50%, rgba(54, 247, 255, 0.2), transparent 42%),
     #0b0e13;
+}
+
+.hex-preview {
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 79, 216, 0.07) 0px, transparent 1px, transparent 22px),
+    repeating-linear-gradient(90deg, rgba(54, 247, 255, 0.07) 0px, transparent 1px, transparent 22px),
+    radial-gradient(circle at 62% 38%, rgba(255, 79, 216, 0.38), transparent 22%),
+    radial-gradient(circle at 28% 64%, rgba(54, 247, 255, 0.28), transparent 20%),
+    linear-gradient(145deg, #0c0e14, #0a0c12);
+}
+
+.fracture-preview {
+  background:
+    radial-gradient(circle at 48% 50%, rgba(255, 255, 255, 0.9), transparent 2.5%),
+    radial-gradient(ellipse at 32% 38%, rgba(54, 247, 255, 0.22), transparent 30%),
+    radial-gradient(ellipse at 65% 62%, rgba(255, 79, 216, 0.18), transparent 28%),
+    radial-gradient(ellipse at 55% 44%, rgba(184, 255, 93, 0.1), transparent 20%),
+    linear-gradient(145deg, #08090f, #0c0e16);
 }
 
 .toy-meta {

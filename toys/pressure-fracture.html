@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pressure Fracture | Fidget Toy Garden</title>
+    <link rel="stylesheet" href="../styles.css" />
+    <style>
+      body.toy-page { overflow: hidden; background: #030407; }
+      #fracture-canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        touch-action: none;
+        cursor: crosshair;
+      }
+    </style>
+  </head>
+  <body class="toy-page">
+    <nav class="toy-nav" aria-label="Toy controls">
+      <a class="back-link" href="../index.html">← Home</a>
+      <button class="sound-toggle" type="button" aria-label="Toggle sound" aria-pressed="false">♪</button>
+    </nav>
+    <canvas id="fracture-canvas" aria-label="Glass surface that fractures on hold and release"></canvas>
+    <div class="toy-status">
+      <p id="status-text">Hold to charge. Release to fracture. The glass always heals.</p>
+    </div>
+    <script>
+      const canvas = document.getElementById('fracture-canvas');
+      const ctx = canvas.getContext('2d');
+      const statusEl = document.getElementById('status-text');
+
+      let W, H;
+      let fractures = [];
+      let shockwaves = [];
+      let glassLines = [];
+
+      let holdStart = null;
+      let holdX = 0, holdY = 0;
+      let statusTimeout = null;
+
+      const MAX_HOLD = 2200; // ms to reach full power
+
+      // ── SOUND ────────────────────────────────────────────────────────
+      // Synthesized glass shatter via Web Audio — no sample files needed.
+      // Layered approach: sharp impact tink + broadband noise burst + low resonance body.
+      let audio = null;
+      let soundEnabled = false;
+      const soundToggle = document.querySelector('.sound-toggle');
+
+      function makeAudio() {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return null;
+        const ac = new AudioCtx();
+        const master = ac.createGain();
+        master.gain.value = 0.72;
+        master.connect(ac.destination);
+
+        // Pre-allocate noise buffers once and reuse them every hit.
+        // White noise doesn't need fresh randomness — same buffer is indistinguishable.
+        // This prevents per-shatter AudioBuffer allocation from accumulating.
+        const fill = len => {
+          const b = ac.createBuffer(1, Math.ceil(ac.sampleRate * len), ac.sampleRate);
+          const d = b.getChannelData(0);
+          for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+          return b;
+        };
+        return { ac, master, noiseBuf: fill(0.72), resBuf: fill(0.52) };
+      }
+
+      async function toggleSound() {
+        if (!audio) audio = makeAudio();
+        if (!audio) { setStatus('This browser does not support Web Audio.', 4000); return; }
+        if (audio.ac.state === 'suspended') await audio.ac.resume();
+        soundEnabled = !soundEnabled;
+        soundToggle.setAttribute('aria-pressed', String(soundEnabled));
+        soundToggle.textContent = soundEnabled ? '♫' : '♪';
+        setStatus(soundEnabled ? 'Sound on.' : 'Sound off.', 3000);
+      }
+
+      // Synthesizes a glass shatter scaled to power (0–1).
+      // Three layers: impact tink / noise burst / low resonance body.
+      // Nodes are explicitly stopped and disconnected via onended to prevent graph accumulation.
+      function playShatter(power) {
+        if (!soundEnabled || !audio) return;
+        const { ac, master, noiseBuf, resBuf } = audio;
+        const now = ac.currentTime;
+
+        // Auto-disconnect a chain of nodes when the source ends.
+        // Without this, stopped nodes linger in the audio graph indefinitely.
+        function autoClean(src, nodes, stopAt) {
+          src.onended = () => nodes.forEach(n => { try { n.disconnect(); } catch (_) {} });
+          src.start(now);
+          src.stop(stopAt);
+        }
+
+        // Layer 1: Impact tink — high-freq sine that pitch-drops fast
+        const tinkFreq = 2400 + power * 2600;
+        const tink = ac.createOscillator();
+        const tinkGain = ac.createGain();
+        tink.type = 'sine';
+        tink.frequency.setValueAtTime(tinkFreq, now);
+        tink.frequency.exponentialRampToValueAtTime(tinkFreq * 0.35, now + 0.09);
+        tinkGain.gain.setValueAtTime(0.28 + power * 0.38, now);
+        tinkGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+        tink.connect(tinkGain);
+        tinkGain.connect(master);
+        autoClean(tink, [tink, tinkGain], now + 0.15);
+
+        // Layer 2: Noise burst — reuses pre-allocated noiseBuf, no per-call allocation
+        const noise = ac.createBufferSource();
+        noise.buffer = noiseBuf;
+        const hiPass = ac.createBiquadFilter();
+        hiPass.type = 'highpass';
+        hiPass.frequency.value = 2800 - power * 1200;
+        const noiseGain = ac.createGain();
+        const noiseStop = now + 0.1 + power * 0.45;
+        noiseGain.gain.setValueAtTime(0.0001, now);
+        noiseGain.gain.exponentialRampToValueAtTime(0.45 + power * 0.4, now + 0.004);
+        noiseGain.gain.exponentialRampToValueAtTime(0.0001, noiseStop);
+        noise.connect(hiPass);
+        hiPass.connect(noiseGain);
+        noiseGain.connect(master);
+        autoClean(noise, [noise, hiPass, noiseGain], noiseStop + 0.05);
+
+        // Layer 3: Low resonance body — reuses pre-allocated resBuf
+        if (power > 0.25) {
+          const res = ac.createBufferSource();
+          res.buffer = resBuf;
+          const resFilt = ac.createBiquadFilter();
+          resFilt.type = 'bandpass';
+          resFilt.frequency.value = 900 + (1 - power) * 700;
+          resFilt.Q.value = 2.5;
+          const resGain = ac.createGain();
+          const resStop = now + 0.2 + power * 0.35;
+          resGain.gain.setValueAtTime(0.0001, now);
+          resGain.gain.exponentialRampToValueAtTime((power - 0.25) * 0.3, now + 0.018);
+          resGain.gain.exponentialRampToValueAtTime(0.0001, resStop);
+          res.connect(resFilt);
+          resFilt.connect(resGain);
+          resGain.connect(master);
+          autoClean(res, [res, resFilt, resGain], resStop + 0.05);
+        }
+      }
+
+      soundToggle.addEventListener('click', toggleSound);
+
+      // ── GLASS TEXTURE ────────────────────────────────────────────────
+      // Builds a faint crystalline proximity graph drawn once per resize.
+      function buildGlass() {
+        glassLines = [];
+        const pts = [];
+        const count = Math.floor((W * H) / 7000);
+        for (let i = 0; i < count; i++) {
+          pts.push([Math.random() * W, Math.random() * H]);
+        }
+        // Edge anchor points keep the texture from looking hollow at borders
+        for (let i = 0; i < 14; i++) {
+          pts.push([Math.random() * W, 0], [Math.random() * W, H],
+                   [0, Math.random() * H], [W, Math.random() * H]);
+        }
+        const maxD2 = 130 * 130;
+        for (let i = 0; i < pts.length; i++) {
+          for (let j = i + 1; j < pts.length; j++) {
+            const dx = pts[i][0] - pts[j][0];
+            const dy = pts[i][1] - pts[j][1];
+            if (dx * dx + dy * dy < maxD2) glassLines.push([pts[i], pts[j]]);
+          }
+        }
+      }
+
+      function drawGlass() {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(54, 247, 255, 0.034)';
+        ctx.lineWidth = 0.4;
+        ctx.shadowBlur = 0;
+        for (const [a, b] of glassLines) {
+          ctx.beginPath();
+          ctx.moveTo(a[0], a[1]);
+          ctx.lineTo(b[0], b[1]);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // ── FRACTURE ─────────────────────────────────────────────────────
+      // Branching crack structure that radiates from the impact point.
+      // Power (0–1) scales arm count, reach, and lifetime.
+      class Fracture {
+        constructor(x, y, power) {
+          this.x = x;
+          this.y = y;
+          this.power = power;
+          this.lines = [];
+          this.born = performance.now();
+          this.lifetime = 2500 + power * 6500; // 2.5s tap → 9s full charge
+          this._generate();
+        }
+
+        _generate() {
+          const armCount = Math.floor(4 + this.power * 12);
+          const maxReach = 55 + this.power * Math.min(W, H) * 0.62;
+          for (let i = 0; i < armCount; i++) {
+            // Jitter the base angles so arms don't look perfectly symmetric
+            const angle = (Math.PI * 2 / armCount) * i + (Math.random() - 0.5) * 1.3;
+            this._arm(this.x, this.y, angle, maxReach * (0.45 + Math.random() * 0.55), 0);
+          }
+        }
+
+        // Recursively builds one arm as connected line segments with branching
+        _arm(x, y, angle, remaining, depth) {
+          if (remaining < 5 || depth > 5) return;
+          const segLen = Math.min(remaining, 12 + Math.random() * 32);
+          const a = angle + (Math.random() - 0.5) * 0.55; // slight wobble per segment
+          const x2 = x + Math.cos(a) * segLen;
+          const y2 = y + Math.sin(a) * segLen;
+
+          // Color by depth: main arms cyan/pink, branches shift to lime/amber
+          const color = depth === 0 ? (Math.random() > 0.5 ? '#36f7ff' : '#ff4fd8')
+                      : depth === 1 ? (Math.random() > 0.5 ? '#36f7ff' : '#ffd166')
+                      :               (Math.random() > 0.5 ? '#b8ff5d' : '#ffd166');
+
+          this.lines.push({ x1: x, y1: y, x2, y2, depth, color });
+          this._arm(x2, y2, a, remaining - segLen, depth);
+
+          // Branches get less likely and shorter as depth increases
+          if (depth < 4 && remaining > 28 && Math.random() < 0.64 - depth * 0.12) {
+            const sign = Math.random() > 0.5 ? 1 : -1;
+            this._arm(x2, y2, a + sign * (0.32 + Math.random() * 0.78),
+                      remaining * (0.22 + Math.random() * 0.42), depth + 1);
+          }
+        }
+
+        _alpha(now) {
+          const age = now - this.born;
+          if (age < 120) return age / 120;                     // flash in
+          const rem = this.lifetime - age;
+          if (rem < 1800) return Math.max(0, rem / 1800);      // fade out
+          return 1;
+        }
+
+        draw(now) {
+          const a = this._alpha(now);
+          if (a <= 0) return;
+          ctx.save();
+          ctx.globalAlpha = a;
+          for (const l of this.lines) {
+            ctx.beginPath();
+            ctx.moveTo(l.x1, l.y1);
+            ctx.lineTo(l.x2, l.y2);
+            ctx.strokeStyle = l.color;
+            ctx.lineWidth = Math.max(0.3, 2.2 - l.depth * 0.38);
+            ctx.shadowColor = l.color;
+            ctx.shadowBlur = Math.max(1, 14 - l.depth * 2.8);
+            ctx.stroke();
+          }
+          ctx.restore();
+        }
+
+        get dead() { return performance.now() - this.born > this.lifetime; }
+      }
+
+      // ── SHOCKWAVE ────────────────────────────────────────────────────
+      // Expanding ring on impact — quick, dramatic, then gone.
+      class Shockwave {
+        constructor(x, y, power) {
+          this.x = x; this.y = y; this.power = power;
+          this.born = performance.now();
+          this.lifetime = 550 + power * 280;
+        }
+        draw(now) {
+          const t = (now - this.born) / this.lifetime;
+          if (t < 0 || t >= 1) return;
+          const r = (70 + this.power * 130) * t;
+          const color = this.power > 0.6 ? '#ff4fd8' : '#36f7ff';
+          ctx.save();
+          ctx.globalAlpha = (1 - t) * 0.85;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, r, 0, Math.PI * 2);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(0.5, 2.5 - t * 2);
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 22;
+          ctx.stroke();
+          ctx.restore();
+        }
+        get dead() { return performance.now() - this.born > this.lifetime; }
+      }
+
+      // ── CHARGE INDICATOR ─────────────────────────────────────────────
+      // Pulsing rings and an impact dot that grow with hold duration.
+      function drawCharge(now) {
+        if (holdStart === null) return;
+        const elapsed = now - holdStart;
+        const power = Math.min(1, elapsed / MAX_HOLD);
+        const color = power > 0.6 ? '#ff4fd8' : '#36f7ff';
+
+        ctx.save();
+        for (let i = 0; i < 3; i++) {
+          const phase = ((now / 270) + i / 3) % 1;
+          const r = 7 + power * 48 * phase;
+          ctx.beginPath();
+          ctx.arc(holdX, holdY, r, 0, Math.PI * 2);
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.5;
+          ctx.shadowColor = color;
+          ctx.shadowBlur = 18;
+          ctx.globalAlpha = (1 - phase) * 0.88 * Math.min(1, elapsed / 120);
+          ctx.stroke();
+        }
+        // Core dot
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(holdX, holdY, 3 + power * 2.5, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.shadowColor = color;
+        ctx.shadowBlur = 28;
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // ── STATUS ───────────────────────────────────────────────────────
+      function setStatus(text, revertMs) {
+        statusEl.textContent = text;
+        if (statusTimeout) clearTimeout(statusTimeout);
+        if (revertMs) {
+          statusTimeout = setTimeout(() => {
+            statusEl.textContent = 'Hold to charge. Release to fracture. The glass always heals.';
+          }, revertMs);
+        }
+      }
+
+      // ── LOOP ─────────────────────────────────────────────────────────
+      function loop(now) {
+        ctx.fillStyle = '#030407';
+        ctx.fillRect(0, 0, W, H);
+        drawGlass();
+
+        fractures = fractures.filter(f => !f.dead);
+        shockwaves = shockwaves.filter(s => !s.dead);
+
+        for (const s of shockwaves) s.draw(now);
+        for (const f of fractures) f.draw(now);
+        drawCharge(now);
+
+        // Live status while charging
+        if (holdStart !== null) {
+          const power = Math.min(1, (now - holdStart) / MAX_HOLD);
+          if (power >= 1) setStatus('That\'s everything you\'ve got.');
+          else if (power > 0.5) setStatus('Hold longer. Go harder.');
+          else setStatus('Building pressure…');
+        }
+
+        requestAnimationFrame(loop);
+      }
+
+      // ── INPUT ────────────────────────────────────────────────────────
+      function getPos(e) {
+        if (e.touches && e.touches.length) {
+          return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        }
+        return { x: e.clientX, y: e.clientY };
+      }
+
+      function startPress(e) {
+        const { x, y } = getPos(e);
+        holdStart = performance.now();
+        holdX = x;
+        holdY = y;
+        if (statusTimeout) clearTimeout(statusTimeout);
+      }
+
+      function endPress() {
+        if (holdStart === null) return;
+        const power = Math.min(1, (performance.now() - holdStart) / MAX_HOLD);
+        fractures.push(new Fracture(holdX, holdY, Math.max(0.06, power)));
+        shockwaves.push(new Shockwave(holdX, holdY, power));
+        playShatter(Math.max(0.06, power));
+        holdStart = null;
+        setStatus('The glass always heals.', 5000);
+      }
+
+      canvas.addEventListener('mousedown', startPress);
+      window.addEventListener('mouseup', endPress);
+      canvas.addEventListener('touchstart', e => { e.preventDefault(); startPress(e); }, { passive: false });
+      canvas.addEventListener('touchend', e => { e.preventDefault(); endPress(e); }, { passive: false });
+
+      // ── INIT ─────────────────────────────────────────────────────────
+      function resize() {
+        W = canvas.width = window.innerWidth;
+        H = canvas.height = window.innerHeight;
+        buildGlass();
+      }
+
+      window.addEventListener('resize', resize);
+      resize();
+      requestAnimationFrame(loop);
+    </script>
+  </body>
+</html>
